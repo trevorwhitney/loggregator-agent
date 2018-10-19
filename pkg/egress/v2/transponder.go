@@ -1,6 +1,9 @@
 package v2
 
 import (
+	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
+	"strings"
 	"time"
 
 	"code.cloudfoundry.org/go-loggregator/pulseemitter"
@@ -82,6 +85,115 @@ func (t *Transponder) Start() {
 func (t *Transponder) write(batch []*loggregator_v2.Envelope) {
 	for _, e := range batch {
 		t.addTags(e)
+	}
+
+	for _, env := range batch {
+		origin, ok := env.GetTags()["origin"]
+		if !ok {
+			origin = ""
+		}
+
+		job, ok := env.GetTags()["job"]
+		if !ok {
+			job = ""
+		}
+
+		println(fmt.Sprintf("writing v2 envelope %s.%s : %v", origin, job, env))
+		//TODO: add source id to tags
+		//sourceId := env.SourceId
+		switch x := env.Message.(type) {
+		case *loggregator_v2.Envelope_Counter:
+			counter := x.Counter
+			name := counter.GetName()
+			if _, ok := env.Tags["origin"]; ok {
+				name = fmt.Sprintf("%s_%s", env.Tags["origin"], name)
+			}
+
+			name = strings.Replace(name, ".", "_", -1)
+			name = strings.Replace(name, "/", "_", -1)
+			name = strings.Replace(name, "-", "", -1)
+			name = fmt.Sprintf("%s_total", name)
+
+			tags := make(map[string]string)
+			for key, value := range env.DeprecatedTags {
+				tags[key] = value.GetText()
+			}
+			for key, value := range env.Tags {
+				tags[key] = value
+			}
+
+			counterOpts := prometheus.CounterOpts{
+				Name:        name,
+				ConstLabels: tags,
+			}
+
+			promCounter := prometheus.NewCounter(counterOpts)
+			err := prometheus.Register(promCounter)
+			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+				if col, ok := are.ExistingCollector.(prometheus.Counter); ok {
+					promCounter = col
+				}
+			}
+
+			total := float64(counter.GetTotal())
+			println(fmt.Sprintf("writting v2 counter %s with value %g and tags %v with deprecatedTags %v", name, total, env.Tags, env.DeprecatedTags))
+			//metric := dto.Metric{
+			//	Label: labels,
+			//	Counter: &dto.Counter{
+			//		Value: &total,
+			//	},
+			//}
+
+			promCounter.Add(total)
+		case *loggregator_v2.Envelope_Gauge:
+			gaugeMetrics := x.Gauge.GetMetrics()
+
+			for name, value := range gaugeMetrics {
+				unitValue := value.GetUnit()
+
+				if unitValue != "" {
+					name = fmt.Sprintf("%s_%s", name, unitValue)
+				}
+
+				if _, ok := env.Tags["origin"]; ok {
+					name = fmt.Sprintf("%s_%s", env.Tags["origin"], name)
+				}
+
+				name = strings.Replace(name, ".", "_", -1)
+				name = strings.Replace(name, "/", "_", -1)
+				name = strings.Replace(name, "-", "", -1)
+
+
+				tags := make(map[string]string)
+				for key, value := range env.DeprecatedTags {
+					tags[key] = value.GetText()
+				}
+				for key, value := range env.Tags {
+					tags[key] = value
+				}
+
+				gaugeOpts := prometheus.GaugeOpts{
+					Name:        name,
+					ConstLabels: tags,
+				}
+
+				promGauge := prometheus.NewGauge(gaugeOpts)
+				err := prometheus.Register(promGauge)
+				if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+					if col, ok := are.ExistingCollector.(prometheus.Gauge); ok {
+						promGauge = col
+					}
+				}
+
+				total := value.GetValue()
+				println(fmt.Sprintf("writting v2 gauge %s with value %g and tags %v and deprecated tags %v", name, total, env.Tags, env.DeprecatedTags))
+
+				promGauge.Set(total)
+			}
+		case nil:
+		default:
+			continue
+		}
 	}
 
 	if err := t.writer.Write(batch); err != nil {

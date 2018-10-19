@@ -1,7 +1,10 @@
 package v1
 
 import (
+	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
 	"log"
+	"strings"
 	"sync"
 
 	"code.cloudfoundry.org/go-loggregator/pulseemitter"
@@ -45,12 +48,84 @@ func (m *EventMarshaller) writer() BatchChainByteWriter {
 }
 
 func (m *EventMarshaller) Write(envelope *events.Envelope) {
+	switch envelope.GetEventType() {
+	case events.Envelope_CounterEvent:
+		counter := envelope.GetCounterEvent()
+		name := counter.GetName()
+		name = fmt.Sprintf("%s_%s", envelope.GetOrigin(), name)
+		name = strings.Replace(name, ".", "_", -1)
+		name = strings.Replace(name, "/", "_", -1)
+		name = strings.Replace(name, "-", "", -1)
+		name = fmt.Sprintf("%s_total", name)
+
+		tags := make(map[string]string)
+		for key, value := range envelope.Tags {
+			tags[key] = value
+		}
+
+		counterOpts := prometheus.CounterOpts{
+			Name:        name,
+			ConstLabels: tags,
+		}
+
+		promCounter := prometheus.NewCounter(counterOpts)
+		err := prometheus.Register(promCounter)
+		if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			if col, ok := are.ExistingCollector.(prometheus.Counter); ok {
+				promCounter = col
+			}
+		}
+
+		total := float64(counter.GetTotal())
+		println(fmt.Sprintf("writting V1 counter %s with value %g and tags %v", name, total, envelope.Tags))
+		promCounter.Add(total)
+	case events.Envelope_ValueMetric:
+		gaugeMetric := envelope.GetValueMetric()
+
+		name := gaugeMetric.GetName()
+		value := gaugeMetric.GetValue()
+		unitValue := gaugeMetric.GetUnit()
+
+		if unitValue != "" {
+			name = fmt.Sprintf("%s_%s", name, unitValue)
+		}
+
+		name = fmt.Sprintf("%s_%s", envelope.GetOrigin(), name)
+
+		name = strings.Replace(name, ".", "_", -1)
+		name = strings.Replace(name, "/", "_", -1)
+		name = strings.Replace(name, "-", "", -1)
+
+		tags := make(map[string]string)
+		for key, value := range envelope.Tags {
+			tags[key] = value
+		}
+
+		gaugeOpts := prometheus.GaugeOpts{
+			Name:        name,
+			ConstLabels: tags,
+		}
+
+		promGauge := prometheus.NewGauge(gaugeOpts)
+		err := prometheus.Register(promGauge)
+		if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			if col, ok := are.ExistingCollector.(prometheus.Gauge); ok {
+				promGauge = col
+			}
+		}
+
+		println(fmt.Sprintf("writting V1 gauge %s with value %g and tags %v", name, value, envelope.Tags))
+		promGauge.Set(value)
+	}
+
+
+
 	writer := m.writer()
 	if writer == nil {
 		log.Print("EventMarshaller: Write called while byteWriter is nil")
 		return
 	}
-
+	println("got v1 message EventMashaller")
 	envelopeBytes, err := proto.Marshal(envelope)
 	if err != nil {
 		log.Printf("marshalling error: %v", err)

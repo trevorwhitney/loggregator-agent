@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"flag"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"io/ioutil"
 	"log"
@@ -62,7 +63,50 @@ func main() {
 
 	tlsConfig.BuildNameToCertificate()
 
-	http.Handle("/metrics", promhttp.Handler())
+	counterOpts := prometheus.CounterOpts{
+		Name:        "observability_metron_scrape_total",
+		ConstLabels: map[string]string{
+			"ip": config.IP,
+			"index": config.Index,
+			"job": config.Job,
+			"deployment": config.Deployment,
+		},
+	}
+
+	promCounter := prometheus.NewCounter(counterOpts)
+	err = prometheus.Register(promCounter)
+	if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+		if col, ok := are.ExistingCollector.(prometheus.Counter); ok {
+			promCounter = col
+		}
+	}
+
+	scrapeTimeCounterOpts := prometheus.CounterOpts{
+		Name:        "observability_metron_scrape_last_occurred",
+		ConstLabels: map[string]string{
+			"ip": config.IP,
+			"index": config.Index,
+			"job": config.Job,
+			"deployment": config.Deployment,
+		},
+	}
+
+	scrapeTimeCounter := prometheus.NewCounter(scrapeTimeCounterOpts)
+	err = prometheus.Register(promCounter)
+	if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+		if col, ok := are.ExistingCollector.(prometheus.Counter); ok {
+			promCounter = col
+		}
+	}
+
+	scrapeHandlerWithMetrics := func(response http.ResponseWriter, request *http.Request) {
+		promCounter.Inc()
+		currentTime := time.Now().Unix()
+		scrapeTimeCounter.Add(float64(currentTime))
+		promhttp.Handler().ServeHTTP(response, request)
+	}
+
+	http.HandleFunc("/metrics", scrapeHandlerWithMetrics)
 	httpServer := &http.Server{
 		Addr:      ":8888",
 		TLSConfig: tlsConfig,

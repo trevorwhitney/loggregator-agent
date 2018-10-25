@@ -105,14 +105,50 @@ func (t *Transponder) write(batch []*loggregator_v2.Envelope) {
 		case *loggregator_v2.Envelope_Counter:
 			counter := x.Counter
 			name := counter.GetName()
-			if _, ok := env.Tags["origin"]; ok {
-				name = fmt.Sprintf("%s_%s", env.Tags["origin"], name)
-			}
 
 			name = strings.Replace(name, ".", "_", -1)
 			name = strings.Replace(name, "/", "_", -1)
-			name = strings.Replace(name, "-", "", -1)
-			name = fmt.Sprintf("%s_total", name)
+			name = strings.Replace(name, "-", "_", -1)
+
+			if name == "heartbeat" {
+				heartbeatLastSeenOpts := prometheus.CounterOpts{
+					Name: "observability_heartbeat_metron_last_occurred",
+					ConstLabels: map[string]string{
+						"ip":         env.Tags["ip"],
+						"index":      env.Tags["index"],
+						"job":        env.Tags["job"],
+						"deployment": env.Tags["deployment"],
+					},
+				}
+
+				heartbeatLastSeen := prometheus.NewCounter(heartbeatLastSeenOpts)
+				err := prometheus.Register(heartbeatLastSeen)
+				if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+					if col, ok := are.ExistingCollector.(prometheus.Counter); ok {
+						heartbeatLastSeen = col
+					}
+				}
+				heartbeatLastSeen.Add(float64(time.Now().Unix()))
+
+				heartbeatCountOpts := prometheus.CounterOpts{
+					Name: "observability_heartbeat_metron_total",
+					ConstLabels: map[string]string{
+						"ip":         env.Tags["ip"],
+						"index":      env.Tags["index"],
+						"job":        env.Tags["job"],
+						"deployment": env.Tags["deployment"],
+					},
+				}
+
+				heartbeatCount := prometheus.NewCounter(heartbeatCountOpts)
+				err = prometheus.Register(heartbeatCount)
+				if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+					if col, ok := are.ExistingCollector.(prometheus.Counter); ok {
+						heartbeatCount = col
+					}
+				}
+				heartbeatCount.Inc()
+			}
 
 			tags := make(map[string]string)
 			for key, value := range env.DeprecatedTags {
@@ -137,32 +173,15 @@ func (t *Transponder) write(batch []*loggregator_v2.Envelope) {
 
 			total := float64(counter.GetTotal())
 			println(fmt.Sprintf("writting v2 counter %s with value %g and tags %v with deprecatedTags %v", name, total, env.Tags, env.DeprecatedTags))
-			//metric := dto.Metric{
-			//	Label: labels,
-			//	Counter: &dto.Counter{
-			//		Value: &total,
-			//	},
-			//}
 
 			promCounter.Add(total)
 		case *loggregator_v2.Envelope_Gauge:
 			gaugeMetrics := x.Gauge.GetMetrics()
 
 			for name, value := range gaugeMetrics {
-				unitValue := value.GetUnit()
-
-				if unitValue != "" {
-					name = fmt.Sprintf("%s_%s", name, unitValue)
-				}
-
-				if _, ok := env.Tags["origin"]; ok {
-					name = fmt.Sprintf("%s_%s", env.Tags["origin"], name)
-				}
-
 				name = strings.Replace(name, ".", "_", -1)
 				name = strings.Replace(name, "/", "_", -1)
-				name = strings.Replace(name, "-", "", -1)
-
+				name = strings.Replace(name, "-", "_", -1)
 
 				tags := make(map[string]string)
 				for key, value := range env.DeprecatedTags {

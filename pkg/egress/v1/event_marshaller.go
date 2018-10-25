@@ -52,11 +52,9 @@ func (m *EventMarshaller) Write(envelope *events.Envelope) {
 	case events.Envelope_CounterEvent:
 		counter := envelope.GetCounterEvent()
 		name := counter.GetName()
-		name = fmt.Sprintf("%s_%s", envelope.GetOrigin(), name)
 		name = strings.Replace(name, ".", "_", -1)
 		name = strings.Replace(name, "/", "_", -1)
-		name = strings.Replace(name, "-", "", -1)
-		name = fmt.Sprintf("%s_total", name)
+		name = strings.Replace(name, "-", "_", -1)
 
 		tags := make(map[string]string)
 		for key, value := range envelope.Tags {
@@ -84,17 +82,10 @@ func (m *EventMarshaller) Write(envelope *events.Envelope) {
 
 		name := gaugeMetric.GetName()
 		value := gaugeMetric.GetValue()
-		unitValue := gaugeMetric.GetUnit()
-
-		if unitValue != "" {
-			name = fmt.Sprintf("%s_%s", name, unitValue)
-		}
-
-		name = fmt.Sprintf("%s_%s", envelope.GetOrigin(), name)
 
 		name = strings.Replace(name, ".", "_", -1)
 		name = strings.Replace(name, "/", "_", -1)
-		name = strings.Replace(name, "-", "", -1)
+		name = strings.Replace(name, "-", "_", -1)
 
 		tags := make(map[string]string)
 		for key, value := range envelope.Tags {

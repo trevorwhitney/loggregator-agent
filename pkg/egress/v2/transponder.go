@@ -172,7 +172,6 @@ func (t *Transponder) write(batch []*loggregator_v2.Envelope) {
 			}
 
 			total := float64(counter.GetTotal())
-			println(fmt.Sprintf("writting v2 counter %s with value %g and tags %v with deprecatedTags %v", name, total, env.Tags, env.DeprecatedTags))
 
 			promCounter.Add(total)
 		case *loggregator_v2.Envelope_Gauge:
@@ -205,7 +204,6 @@ func (t *Transponder) write(batch []*loggregator_v2.Envelope) {
 				}
 
 				total := value.GetValue()
-				println(fmt.Sprintf("writting v2 gauge %s with value %g and tags %v and deprecated tags %v", name, total, env.Tags, env.DeprecatedTags))
 
 				promGauge.Set(total)
 			}

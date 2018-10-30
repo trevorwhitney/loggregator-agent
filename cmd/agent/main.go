@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -63,6 +64,45 @@ func main() {
 
 	tlsConfig.BuildNameToCertificate()
 
+	scrapeIntervalSeconds := int64(15)
+	startupTime := time.Now().Unix()
+
+	numberOfScrapeIntervalsCounterOpts := prometheus.CounterOpts{
+		Name:        "observability_metron_scrape_intervals_total",
+		ConstLabels: map[string]string{
+			"ip": config.IP,
+			"index": config.Index,
+			"job": config.Job,
+			"deployment": config.Deployment,
+		},
+	}
+
+	numberOfScrapeIntervalsCounter := prometheus.NewCounter(numberOfScrapeIntervalsCounterOpts)
+	err = prometheus.Register(numberOfScrapeIntervalsCounter)
+	if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+		if col, ok := are.ExistingCollector.(prometheus.Counter); ok {
+			numberOfScrapeIntervalsCounter = col
+		}
+	}
+
+	actualScrapedIntervalsCounterOpts := prometheus.CounterOpts{
+		Name:        "observability_metron_actual_scrapes_total",
+		ConstLabels: map[string]string{
+			"ip": config.IP,
+			"index": config.Index,
+			"job": config.Job,
+			"deployment": config.Deployment,
+		},
+	}
+
+	actualScrapedIntervalsCounter := prometheus.NewCounter(actualScrapedIntervalsCounterOpts)
+	err = prometheus.Register(actualScrapedIntervalsCounter)
+	if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+		if col, ok := are.ExistingCollector.(prometheus.Counter); ok {
+			actualScrapedIntervalsCounter = col
+		}
+	}
+
 	counterOpts := prometheus.CounterOpts{
 		Name:        "observability_metron_scrape_total",
 		ConstLabels: map[string]string{
@@ -92,17 +132,45 @@ func main() {
 	}
 
 	scrapeTimeCounter := prometheus.NewCounter(scrapeTimeCounterOpts)
-	err = prometheus.Register(promCounter)
+	err = prometheus.Register(scrapeTimeCounter)
 	if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
 		if col, ok := are.ExistingCollector.(prometheus.Counter); ok {
-			promCounter = col
+			scrapeTimeCounter = col
 		}
 	}
 
+	scrapeTimeGaugeOpts := prometheus.GaugeOpts{
+		Name:        "observability_metron_scrape_last_occurred_gauge",
+		ConstLabels: map[string]string{
+			"ip": config.IP,
+			"index": config.Index,
+			"job": config.Job,
+			"deployment": config.Deployment,
+		},
+	}
+
+	scrapeTimeGauge := prometheus.NewGauge(scrapeTimeGaugeOpts)
+	err = prometheus.Register(scrapeTimeGauge)
+	if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+		if col, ok := are.ExistingCollector.(prometheus.Gauge); ok {
+			scrapeTimeGauge = col
+		}
+	}
+	lastScrapeTime := int64(0)
 	scrapeHandlerWithMetrics := func(response http.ResponseWriter, request *http.Request) {
+		intervals := math.Floor(float64((time.Now().Unix() - startupTime)) / float64(scrapeIntervalSeconds))
+		numberOfScrapeIntervalsCounter.Add(float64(intervals) + float64(1)) //Intervals should be 1-indexed to match scrapes
+		currentScrapeInterval := time.Now().Truncate(time.Duration(scrapeIntervalSeconds) * time.Second).Unix()
+
+		if lastScrapeTime != currentScrapeInterval {
+			actualScrapedIntervalsCounter.Inc()
+			lastScrapeTime = currentScrapeInterval
+		}
+
 		promCounter.Inc()
 		currentTime := time.Now().Unix()
 		scrapeTimeCounter.Add(float64(currentTime))
+		scrapeTimeGauge.Set(float64(currentTime))
 		promhttp.Handler().ServeHTTP(response, request)
 	}
 

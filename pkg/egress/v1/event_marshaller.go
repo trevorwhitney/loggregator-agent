@@ -1,7 +1,6 @@
 package v1
 
 import (
-	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
 	"log"
 	"strings"
@@ -61,6 +60,8 @@ func (m *EventMarshaller) Write(envelope *events.Envelope) {
 			tags[key] = value
 		}
 
+		tags["source_id"] = envelope.Tags["job"]
+
 		counterOpts := prometheus.CounterOpts{
 			Name:        name,
 			ConstLabels: tags,
@@ -75,7 +76,6 @@ func (m *EventMarshaller) Write(envelope *events.Envelope) {
 		}
 
 		total := float64(counter.GetTotal())
-		println(fmt.Sprintf("writting V1 counter %s with value %g and tags %v", name, total, envelope.Tags))
 		promCounter.Add(total)
 	case events.Envelope_ValueMetric:
 		gaugeMetric := envelope.GetValueMetric()
@@ -91,7 +91,7 @@ func (m *EventMarshaller) Write(envelope *events.Envelope) {
 		for key, value := range envelope.Tags {
 			tags[key] = value
 		}
-
+		tags["source_id"] = envelope.Tags["job"]
 		gaugeOpts := prometheus.GaugeOpts{
 			Name:        name,
 			ConstLabels: tags,
@@ -105,7 +105,6 @@ func (m *EventMarshaller) Write(envelope *events.Envelope) {
 			}
 		}
 
-		println(fmt.Sprintf("writting V1 gauge %s with value %g and tags %v", name, value, envelope.Tags))
 		promGauge.Set(value)
 	}
 
@@ -116,7 +115,6 @@ func (m *EventMarshaller) Write(envelope *events.Envelope) {
 		log.Print("EventMarshaller: Write called while byteWriter is nil")
 		return
 	}
-	println("got v1 message EventMashaller")
 	envelopeBytes, err := proto.Marshal(envelope)
 	if err != nil {
 		log.Printf("marshalling error: %v", err)
